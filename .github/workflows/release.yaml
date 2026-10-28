@@ -1,0 +1,239 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install packaging tools and cross-compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            dpkg-dev \
+            rpm \
+            jq \
+            gcc \
+            gcc-aarch64-linux-gnu
+
+      - name: Create source archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pkg_name="template-c-utility"
+          mkdir -p build/source
+
+          src_dir="build/source/$pkg_name-$VERSION"
+          mkdir -p "$src_dir/src" "$src_dir/completion"
+
+          cp Makefile "$src_dir/"
+          cp src/main.c "$src_dir/src/"
+          cp "completion/_$pkg_name" "$src_dir/completion/"
+          cp LICENSE "$src_dir/"
+
+          tar \
+            --directory build/source \
+            --create \
+            --gzip \
+            --file "build/$pkg_name-$VERSION.tar.gz" \
+            "$pkg_name-$VERSION"
+
+      - name: Calculate source hash
+        id: source_hash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pkg_name="template-c-utility"
+          archive="build/$pkg_name-$VERSION.tar.gz"
+
+          digest="$(
+            sha256sum "$archive" |
+            awk '{print $1}' |
+            xxd -r -p |
+            base64 -w 0
+          )"
+
+          printf 'sha256-%s\n' "$digest" \
+            > "build/$pkg_name-$VERSION.tar.gz.sri"
+
+          echo "Generated Nix hash:"
+          cat "build/$pkg_name-$VERSION.tar.gz.sri"
+
+      - name: Build AMD64 (x86_64) Binaries & Packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pkg_name="template-c-utility"
+          make clean
+          make CC=gcc CFLAGS="-O2 -Wall -Wextra"
+
+          # Debian package (amd64)
+          deb_root="build/deb/${pkg_name}_${VERSION}_amd64"
+          mkdir -p "$deb_root/DEBIAN" "$deb_root/usr/bin" "$deb_root/usr/share/zsh/site-functions"
+          install -m 0755 "$pkg_name" "$deb_root/usr/bin/$pkg_name"
+          install -m 0644 "completion/_$pkg_name" "$deb_root/usr/share/zsh/site-functions/_$pkg_name"
+
+          cat > "$deb_root/DEBIAN/control" <<EOF
+          Package: $pkg_name
+          Version: $VERSION
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: sstix-tools <tools@sstix.invalid>
+          Description: Compiled C utility template
+           A high-performance compiled C utility packaged for sstix-tools.
+          EOF
+
+          dpkg-deb --build --root-owner-group "$deb_root" "build/${pkg_name}_${VERSION}_amd64.deb"
+
+          # RPM package (x86_64)
+          mkdir -p build/rpm-amd64/SOURCES build/rpm-amd64/SPECS build/rpm-amd64/RPMS
+          cp "$pkg_name" "build/rpm-amd64/SOURCES/$pkg_name"
+          cp "completion/_$pkg_name" "build/rpm-amd64/SOURCES/_$pkg_name"
+          sed "s/%{version}/$VERSION/" "packaging/rpm/$pkg_name.spec" > "build/rpm-amd64/SPECS/$pkg_name.spec"
+
+          rpmbuild \
+            --define "_topdir $PWD/build/rpm-amd64" \
+            --define "_sourcedir $PWD/build/rpm-amd64/SOURCES" \
+            --define "_rpmdir $PWD/build/rpm-amd64/RPMS" \
+            --target x86_64-linux \
+            -bb "build/rpm-amd64/SPECS/$pkg_name.spec"
+
+          find build/rpm-amd64/RPMS -name '*.rpm' -exec cp {} build/ \;
+
+      - name: Build ARM64 (aarch64) Binaries & Packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pkg_name="template-c-utility"
+          make clean
+          make CC=aarch64-linux-gnu-gcc CFLAGS="-O2 -Wall -Wextra"
+
+          # Debian package (arm64)
+          deb_root="build/deb/${pkg_name}_${VERSION}_arm64"
+          mkdir -p "$deb_root/DEBIAN" "$deb_root/usr/bin" "$deb_root/usr/share/zsh/site-functions"
+          install -m 0755 "$pkg_name" "$deb_root/usr/bin/$pkg_name"
+          install -m 0644 "completion/_$pkg_name" "$deb_root/usr/share/zsh/site-functions/_$pkg_name"
+
+          cat > "$deb_root/DEBIAN/control" <<EOF
+          Package: $pkg_name
+          Version: $VERSION
+          Section: utils
+          Priority: optional
+          Architecture: arm64
+          Maintainer: sstix-tools <tools@sstix.invalid>
+          Description: Compiled C utility template
+           A high-performance compiled C utility packaged for sstix-tools.
+          EOF
+
+          dpkg-deb --build --root-owner-group "$deb_root" "build/${pkg_name}_${VERSION}_arm64.deb"
+
+          # RPM package (aarch64)
+          mkdir -p build/rpm-arm64/SOURCES build/rpm-arm64/SPECS build/rpm-arm64/RPMS
+          cp "$pkg_name" "build/rpm-arm64/SOURCES/$pkg_name"
+          cp "completion/_$pkg_name" "build/rpm-arm64/SOURCES/_$pkg_name"
+          sed "s/%{version}/$VERSION/" "packaging/rpm/$pkg_name.spec" > "build/rpm-arm64/SPECS/$pkg_name.spec"
+
+          rpmbuild \
+            --define "_topdir $PWD/build/rpm-arm64" \
+            --define "_sourcedir $PWD/build/rpm-arm64/SOURCES" \
+            --define "_rpmdir $PWD/build/rpm-arm64/RPMS" \
+            --target aarch64-linux \
+            -bb "build/rpm-arm64/SPECS/$pkg_name.spec"
+
+          find build/rpm-arm64/RPMS -name '*.rpm' -exec cp {} build/ \;
+
+      - name: Create release manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pkg_name="template-c-utility"
+          source_asset="$pkg_name-$VERSION.tar.gz"
+          source_hash="$(cat "build/$source_asset.sri")"
+
+          jq -n \
+            --arg name "$pkg_name" \
+            --arg version "$VERSION" \
+            --arg source "$source_asset" \
+            --arg source_hash "$source_hash" \
+            '{
+              name: $name,
+              version: $version,
+              type: "c-utility",
+              build_type: "make",
+              description: "Compiled C utility",
+              source_archive: $source,
+              source_hash: $source_hash,
+              apt_packages: [
+                ($name + "_" + $version + "_amd64.deb"),
+                ($name + "_" + $version + "_arm64.deb")
+              ],
+              rpm_packages: [
+                ($name + "-" + $version + "-1.x86_64.rpm"),
+                ($name + "-" + $version + "-1.aarch64.rpm")
+              ],
+              executables: [$name],
+              completions: [("_" + $name)],
+              nix_systems: [
+                "aarch64-darwin",
+                "x86_64-darwin",
+                "x86_64-linux",
+                "aarch64-linux"
+              ]
+            }' \
+            > build/manifest.json
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          mapfile -d '' assets < <(
+            find build \
+              -maxdepth 1 \
+              -type f \
+              -print0
+          )
+
+          printf 'Release assets:\n'
+          printf ' - %s\n' "${assets[@]}"
+
+          gh release create "$GITHUB_REF_NAME" \
+            --title "template-c-utility $VERSION" \
+            --generate-notes \
+            "${assets[@]}"
+
+      - name: Trigger registry update
+        if: always()
+        env:
+          DISPATCH_TOKEN: ${{ secrets.REGISTRY_DISPATCH_TOKEN || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          echo "Notifying registry of new release..."
+          curl -s -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $DISPATCH_TOKEN" \
+            https://api.github.com/repos/sstix-tools/registry/dispatches \
+            -d '{"event_type": "tool_release", "client_payload": {"repository": "${{ github.repository }}", "tag": "${{ github.ref_name }}"}}' \
+            || true

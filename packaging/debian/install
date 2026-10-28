@@ -1,0 +1,2 @@
+template-c-utility usr/bin
+completion/_template-c-utility usr/share/zsh/site-functions

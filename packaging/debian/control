@@ -1,0 +1,12 @@
+Source: template-c-utility
+Section: utils
+Priority: optional
+Maintainer: sstix-tools <tools@sstix.invalid>
+Standards-Version: 4.6.0
+Rules-Requires-Root: no
+
+Package: template-c-utility
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Compiled C utility template
+ A high-performance compiled C utility packaged for sstix-tools.
