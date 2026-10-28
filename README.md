@@ -15,6 +15,8 @@ Template repository for creating compiled C utilities deployed via `sstix-tools`
 ├── src/
 │   └── main.c                   # C source code
 ├── Makefile                     # Standard build & install Makefile
+├── flake.nix                    # Nix package & app definition
+├── flake.lock                   # Nix lockfile
 ├── LICENSE
 └── README.md
 ```
@@ -25,6 +27,7 @@ Template repository for creating compiled C utilities deployed via `sstix-tools`
    - In `Makefile`: `NAME = <your-tool>`
    - `completion/_template-c-utility` -> `completion/_<your-tool>`
    - `packaging/rpm/template-c-utility.spec` -> `packaging/rpm/<your-tool>.spec`
+   - In `flake.nix`: update `pname = "<your-tool>"` and description
    - In `.github/workflows/release.yaml`: update `pkg_name="<your-tool>"`
    - In `packaging/debian/control`: update `Package:` and `Description:`
 3. Implement your C code in `src/`.
